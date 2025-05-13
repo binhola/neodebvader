@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader, random_split
 import numpy as np
 import os
 
+
 # Setup
 latent_dims = 32
 name = "v1"
