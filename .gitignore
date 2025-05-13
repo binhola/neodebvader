@@ -1,0 +1,13 @@
+# Ignore all .log files
+*.log
+
+# Ignore a folder
+__pycache__/
+data/
+MNIST/
+
+# Ignore Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore system files
+.DS_Store
