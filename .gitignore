@@ -11,3 +11,6 @@ MNIST/
 
 # Ignore system files
 .DS_Store
+
+*err
+*out
