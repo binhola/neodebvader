@@ -40,7 +40,7 @@ def log_denorm(images_normed, mu=1.0, nu=2.5):
 
 
 class SimpleBlendDataset(Dataset):
-    def __init__(self, base_path, num_files, beta=2.5, augment=True):
+    def __init__(self, base_path, num_files, beta=2.5, augment=True, isolated=True):
         self.file_paths = []
         self.beta = beta
         self.image_shape = None
@@ -80,18 +80,33 @@ class SimpleBlendDataset(Dataset):
             image_ = f['blend_images'][sample_idx]
             image = normalize_non_linear(image_, self.avg_max_vals, beta=self.beta)
 
-            catalog_data = f[f'catalog_list/{sample_idx}'][0] 
-            redshift = catalog_data['redshift']
-            
-            # g1 = catalog_data['g1']
-            # g2 = catalog_data['g2']
-            r_ab = catalog_data['r_ab']
+            if isolated:
+                catalog_data = f[f'catalog_list/{sample_idx}'][0] 
+                redshift = catalog_data['redshift']
+                
+                # g1 = catalog_data['g1']
+                # g2 = catalog_data['g2']
+                r_ab = catalog_data['r_ab']
+    
+                ### Ellipticity
+                centroids = np.array([catalog_data["x_peak"], catalog_data["y_peak"]])
+                
+                e1, e2 = calculate_ellipticity(image_[2], centroids)
+            else:
+                blend_image = f['blend_images'][sample_idx]
+                isolated_images = f['isolated_images'][sample_idx]
+                
+                centered_gal, shifted_gal = isolate_images
+                
+                catalog_cg, catalog_sg = f[f'catalog_list/{sample_idx}']
+                
+                centroid_cg = np.array([catalog_cg['x_peak'], catalog_cg['y_peak']])
+                centroid_sg = np.array([catalog_sg['x_peak'], catalog_sg['y_peak']])
 
-            ### Ellipticity
-            centroids = np.array([catalog_data["x_peak"], catalog_data["y_peak"]])
-            
-            image_ = image_[2]
-            e1, e2 = calculate_ellipticity(image_, centroids)
+                e1_cen, e2_cen = calculate_ellipticity(centered_gal[2], centroids_cg)
+                e1_shif, e2_shif = calculate_ellipticity(shifted_gal[2], centroid_sg)
+
+                self.isolated_galaxies = isolate_images
 
         image_tensor = torch.from_numpy(image).float()
 
