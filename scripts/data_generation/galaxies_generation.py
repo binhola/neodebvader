@@ -55,6 +55,76 @@ class SamplingShear(DefaultSampling):
         blend_table["g2"] = shear * np.sin(2 * theta)
         return blend_table
 
+class PairSamplingShear(SamplingFunction):
+    """Sampling function for pairs of galaxies. Picks one centered bright galaxy and second dim.
+
+    The bright galaxy is centered at the center of the stamp and the dim galaxy is shifted.
+    The bright galaxy is chosen with magnitude less than `bright_cut` and the dim galaxy
+    is chosen with magnitude cut larger than `bright_cut` and less than `dim_cut`. The cuts
+    can be customized by the user at initialization.
+
+    """
+
+    def __init__(
+        self,
+        stamp_size: float = 24.0,
+        max_shift: Optional[float] = None,
+        mag_name: str = "i_ab",
+        seed: int = DEFAULT_SEED,
+        bright_cut: float = 25.3,
+        dim_cut: float = 28.0,
+        sigma: float = 0.02,
+    ):
+        """Initializes the PairSampling function.
+
+        Args:
+            stamp_size: Size of the desired stamp (in arcseconds).
+            max_shift: Maximum value of shift from center. If None then its set as one-tenth the
+                stamp size (in arcseconds).
+            mag_name: Name of the magnitude column in the catalog to be used.
+            seed: See parent class.
+            bright_cut: Magnitude cut for bright galaxy. (Default: 25.3)
+            dim_cut: Magnitude cut for dim galaxy. (Default: 28.0)
+        """
+        super().__init__(stamp_size, 2, 1, seed)
+        self.stamp_size = stamp_size
+        self.max_shift = max_shift if max_shift is not None else self.stamp_size / 10.0
+        self.mag_name = mag_name
+        self.bright_cut = bright_cut
+        self.dim_cut = dim_cut
+        
+        shear = np.random.rayleigh(scale=sigma)
+        self.shear = shear
+    
+    def __call__(self, table: Table):
+        """Samples galaxies from input catalog to make blend scene."""
+        if self.mag_name not in table.colnames:
+            raise ValueError(f"Catalog must have '{self.mag_name}' column.")
+
+        (q_bright,) = np.where(table[self.mag_name] <= self.bright_cut)
+        (q_dim,) = np.where(
+            (table[self.mag_name] > self.bright_cut) & (table[self.mag_name] <= self.dim_cut)
+        )
+
+        indexes = [np.random.choice(q_bright), np.random.choice(q_dim)]
+        blend_table = table[indexes]
+
+        blend_table["ra"] = 0.0
+        blend_table["dec"] = 0.0
+
+        x_peak, y_peak = btk.sampling_functions._get_random_center_shift(1, self.max_shift, self.rng)
+
+        blend_table["ra"][1] += x_peak
+        blend_table["dec"][1] += y_peak
+
+        btk.sampling_functions._raise_error_if_out_of_bounds(blend_table["ra"], blend_table["dec"], self.stamp_size)
+        
+        theta = np.random.uniform(0, np.pi)
+        blend_table["g1"] = self.shear * np.cos(2 * theta)
+        blend_table["g2"] = self.shear * np.sin(2 * theta)
+
+        return blend_table
+
 def generate_data(store_path, num_images, batch_size, dataset_type, seed=0):
     """
     Generate isolated galaxy images and save them in the given directory.
@@ -83,12 +153,12 @@ def generate_data(store_path, num_images, batch_size, dataset_type, seed=0):
     #     stamp_size=stamp_size, max_shift=max_shift,
     #     seed = 12
     # )
-    sampling_function = btk.sampling_functions.PairSampling(
+    sampling_function = PairSamplingShear(
         stamp_size = stamp_size,
         max_shift = max_shift,
         seed = 24,
-        bright_cut = 25.3,
-        dim_cut = 28.0
+        bright_cut = 24.3,
+        dim_cut = 27.0
     )
     
     LSST = btk.survey.get_surveys("LSST")
@@ -102,7 +172,7 @@ def generate_data(store_path, num_images, batch_size, dataset_type, seed=0):
         draw_generator = btk.draw_blends.CatsimGenerator(
             catalog, sampling_function, LSST,
             batch_size=batch_size, njobs=1,
-            add_noise="all"
+            add_noise="background"
         )
         blend_batch = next(draw_generator)
         blend_batch.save(output_dir, i)
@@ -110,4 +180,4 @@ def generate_data(store_path, num_images, batch_size, dataset_type, seed=0):
 SCRATCH = os.getenv("ALL_CCFRSCRATCH")
 SCRATCH = os.path.join(SCRATCH, "deblending")
 
-generate_data(SCRATCH, 200000, 1000, "blended_training_pair_noise")
+generate_data(SCRATCH, 200000, 1000, "blended_training_pair_noise_background")

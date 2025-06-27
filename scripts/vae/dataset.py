@@ -8,122 +8,85 @@ import random
 import galsim
 
 def normalize_non_linear(images, avg_max_vals, beta=2.5):
-    """Applies the normalization from Eq. (4) of Arcelin et al. 2020 per band."""
-    normed = []
-    for b in range(images.shape[0]):
-        normed_band = np.tanh(np.arcsinh(beta * images[b] / avg_max_vals[b]))
-        normed.append(normed_band)
-    return np.stack(normed)
+    """Vectorized normalization from Arcelin et al. 2020 (Eq. 4)"""
+    scaled = beta * images / avg_max_vals[:, None, None]
+    return np.tanh(np.arcsinh(scaled))
 
 def denormalize_non_linear(images_normed, avg_max_vals, beta=2.5):
-    """Inverse of Arcelin normalization."""
+    """Vectorized inverse normalization."""
+    unscaled = np.sinh(np.arctanh(images_normed))
+    return unscaled * avg_max_vals[:, None, None] / beta
+
+def log_norm(images, vmin=None, vmax=None):
+    normed = []
+    for b in range(images.shape[0]):
+        img = images[b]
+        # Set vmin and vmax if not given
+        min_val = vmin[b] if vmin is not None else np.percentile(img, 1)
+        max_val = vmax[b] if vmax is not None else np.percentile(img, 99)
+        
+        # Clip to positive range to avoid log(0)
+        img_clip = np.clip(img, a_min=max(min_val, 1e-10), a_max=max_val)
+        
+        # Apply log10 normalization to [0,1]
+        norm_img = (np.log10(img_clip) - np.log10(min_val)) / (np.log10(max_val) - np.log10(min_val))
+        normed.append(norm_img)
+    return np.stack(normed)
+
+def de_log_norm(normed_images, vmin, vmax):
     denormed = []
-    for b in range(images_normed.shape[0]):
-        denormed_band = (np.sinh(np.arctanh(images_normed[b])) * avg_max_vals[b]) / beta
-        denormed.append(denormed_band)
+    for b in range(normed_images.shape[0]):
+        norm_img = normed_images[b]
+        val = 10**(norm_img * (np.log10(vmax[b]) - np.log10(vmin[b])) + np.log10(vmin[b]))
+        denormed.append(val)
     return np.stack(denormed)
 
-def normalize_non_linear_old(images):
-    return np.tanh(np.arcsinh(images))
+# def log_norm(images, mu=1.0, nu=2.5):
+#     """Applies per-band logarithmic normalization."""
+#     return np.stack([np.log1p(mu * band) / np.log1p(mu * nu) for band in images])
 
-def denormalize_non_linear_old(images_normed):
-    return np.sinh(np.arctanh(images_normed))
-
-
-def log_norm(images, mu=1.0, nu=2.5):
-    """Applies per-band logarithmic normalization."""
-    return np.stack([np.log1p(mu * band) / np.log1p(mu * nu) for band in images])
-
-def log_denorm(images_normed, mu=1.0, nu=2.5):
-    """Applies inverse of per-band logarithmic normalization."""
-    return np.stack([np.expm1(band * np.log1p(mu * nu)) / mu for band in images_normed])
-
+# def log_denorm(images_normed, mu=1.0, nu=2.5):
+#     """Applies inverse of per-band logarithmic normalization."""
+#     return np.stack([np.expm1(band * np.log1p(mu * nu)) / mu for band in images_normed])
 
 class SimpleBlendDataset(Dataset):
-    def __init__(self, base_path, num_files, beta=2.5, augment=True, isolated=True):
-        self.file_paths = []
-        self.beta = beta
-        self.image_shape = None
+    def __init__(self, sample_size, blend_path, iso_path, iso_noisy_path, e1_path, e2_path, redshift_path, rab_path, avg_max_vals_path, augment=False):
+        self.total_samples = sample_size  
+        self.shape = (self.total_samples, 6, 45, 45)
+
+        self.blend_imgs = np.memmap(blend_path, dtype=np.float32, mode="r", shape=self.shape)
+        self.iso_imgs = np.memmap(iso_path, dtype=np.float32, mode="r", shape=self.shape)
+        self.iso_imgs_noisy = np.memmap(iso_noisy_path, dtype=np.float32, mode="r", shape=self.shape)
+
+        self.e1 = np.memmap(e1_path, dtype=np.float32, mode="r", shape=(self.total_samples,))
+        self.e2 = np.memmap(e2_path, dtype=np.float32, mode="r", shape=(self.total_samples,))
+        self.redshift = np.memmap(redshift_path, dtype=np.float32, mode="r", shape=(self.total_samples,))
+        self.rab = np.memmap(rab_path, dtype=np.float32, mode="r", shape=(self.total_samples,))
+
+        self.avg_max_vals = np.load(avg_max_vals_path)
         self.augment = augment
-        all_band_maxima = []
-
-        for i in range(num_files):
-            path = os.path.join(base_path, f'blend_{i}.hdf5')
-            if os.path.exists(path):
-                self.file_paths.append(path)
-
-        if not self.file_paths:
-            raise ValueError(f"No valid files found in {base_path}")
-
-        self.total_samples = len(self.file_paths) * 1000
-
-        # Compute per-band average of max pixel values
-        for path in self.file_paths:
-            with h5py.File(path, 'r') as f:
-                imgs = f['blend_images'][:]  # shape: (1000, 6, H, W)
-                self.image_shape = imgs.shape[2:]
-                max_vals = imgs.max(axis=(2, 3))  # shape: (1000, 6)
-                all_band_maxima.append(max_vals)
-
-        all_band_maxima = np.concatenate(all_band_maxima, axis=0)  # shape: (N, 6)
-        self.avg_max_vals = all_band_maxima.mean(axis=0)  # shape: (6,)
-        print("Average max per band (used for normalization):", self.avg_max_vals)
 
     def __len__(self):
         return self.total_samples
 
     def __getitem__(self, idx):
-        file_idx = idx // 1000
-        sample_idx = idx % 1000
-
-        with h5py.File(self.file_paths[file_idx], 'r') as f:
-            image_ = f['blend_images'][sample_idx]
-            image = normalize_non_linear(image_, self.avg_max_vals, beta=self.beta)
-
-            if isolated:
-                catalog_data = f[f'catalog_list/{sample_idx}'][0] 
-                redshift = catalog_data['redshift']
-                
-                # g1 = catalog_data['g1']
-                # g2 = catalog_data['g2']
-                r_ab = catalog_data['r_ab']
-    
-                ### Ellipticity
-                centroids = np.array([catalog_data["x_peak"], catalog_data["y_peak"]])
-                
-                e1, e2 = calculate_ellipticity(image_[2], centroids)
-            else:
-                blend_image = f['blend_images'][sample_idx]
-                isolated_images = f['isolated_images'][sample_idx]
-                
-                centered_gal, shifted_gal = isolate_images
-                
-                catalog_cg, catalog_sg = f[f'catalog_list/{sample_idx}']
-                
-                centroid_cg = np.array([catalog_cg['x_peak'], catalog_cg['y_peak']])
-                centroid_sg = np.array([catalog_sg['x_peak'], catalog_sg['y_peak']])
-
-                e1_cen, e2_cen = calculate_ellipticity(centered_gal[2], centroids_cg)
-                e1_shif, e2_shif = calculate_ellipticity(shifted_gal[2], centroid_sg)
-
-                self.isolated_galaxies = isolate_images
-
-        image_tensor = torch.from_numpy(image).float()
+        blend_tensor = torch.from_numpy(self.blend_imgs[idx].copy()).float()
+        iso_tensor = torch.from_numpy(self.iso_imgs[idx].copy()).float()
+        iso_tensor_noisy = torch.from_numpy(self.iso_imgs_noisy[idx].copy()).float()
 
         if self.augment:
-            # Apply random horizontal flip
             if random.random() > 0.5:
-                image_tensor = TF.hflip(image_tensor)
-            # Apply random vertical flip
+                blend_tensor = TF.hflip(blend_tensor)
+                iso_tensor_noisy = TF.hflip(iso_tensor_noisy)
             if random.random() > 0.5:
-                image_tensor = TF.vflip(image_tensor)
-            # Apply random rotation
-            angles = [0, 90, 180, 270]
-            angle = random.choice(angles)
-            image_tensor = TF.rotate(image_tensor, angle)
-    
-        attributes = torch.tensor([redshift, e1, e2, r_ab], dtype=torch.float32)
-        return image_tensor, attributes
+                blend_tensor = TF.vflip(blend_tensor)
+                iso_tensor_noisy = TF.vflip(iso_tensor_noisy)
+            angle = random.choice([0, 90, 180, 270])
+            blend_tensor = TF.rotate(blend_tensor, angle)
+            iso_tensor_noisy = TF.rotate(iso_tensor_noisy, angle)
+
+        attributes = torch.tensor([self.redshift[idx], self.e1[idx], self.e2[idx]], dtype=torch.float32)
+        return blend_tensor, iso_tensor_noisy, iso_tensor, attributes
 
 def calculate_ellipticity(image, centroids):
     y, x = np.indices(image.shape)

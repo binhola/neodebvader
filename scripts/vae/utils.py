@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse
 import os
 
 import torch.nn.functional as F
@@ -72,21 +73,32 @@ def val_epoch(vae, device, dataloader, plot=False):
     return total_loss / n, total_mse / n, total_kl / n
 
 def train_epoch_reg(vae, regressor, device, dataloader, optimizer):
-    vae.encoder.eval() # Freeze VAE
+    vae.encoder.eval() # Freeze VAE encoder
     for param in vae.encoder.parameters():
         param.requires_grad = False
 
     regressor.train()
 
     train_loss = 0.0
-    for x, target in dataloader:
-        x, target = x.to(device), target[:, :3].to(device)
+    for blended, iso_noisy, iso_clean, target in dataloader:
+        x = blended.to(device)
+        target = target.to(device)
+
+        e1_true = target[:, 1]
+        e2_true = target[:, 2]
 
         with torch.no_grad():
             mu, _ = vae.encoder(x)
 
-        pred = regressor(mu)
-        loss = F.mse_loss(pred, target)
+        e_pred = regressor(mu)
+        e1_pred = e_pred[:,0]
+        e2_pred = e_pred[:,1]
+
+        # Loss function
+        loss_e1 = F.mse_loss(e1_pred, e1_true,reduction="mean")
+        loss_e2 = F.mse_loss(e2_pred, e2_true,reduction="mean")
+
+        loss = loss_e1 + loss_e2
 
         optimizer.zero_grad()
         loss.backward()
@@ -106,16 +118,27 @@ def val_epoch_reg(vae, regressor, device, dataloader):
     
     val_loss = 0.0
     with torch.no_grad():
-        for x, target in dataloader:
-            x, target = x.to(device), target[:, :3].to(device)
+        for blended, iso_noisy, iso_clean, target in dataloader:
+            x = blended.to(device)
+            target = target.to(device)
+            
+            e1_true = target[:, 1]
+            e2_true = target[:, 2]
 
             mu, _ = vae.encoder(x)
 
-            pred = regressor(mu)
+            e_pred = regressor(mu)
+            e1_pred = e_pred[:,0]
+            e2_pred = e_pred[:,1]
+            
+            # Loss function
+            loss_e1 = F.mse_loss(e1_pred, e1_true,reduction="mean")
+            loss_e2 = F.mse_loss(e2_pred, e2_true,reduction="mean")
 
-            loss = F.mse_loss(pred, target)
+            loss = loss_e1 + loss_e2
 
             val_loss += loss.item()
+
     n = len(dataloader.dataset)
     return val_loss / n
     
@@ -245,5 +268,70 @@ def show_random_reconstructions(vae, dataset, device, avg_max_vals, n_samples=5)
         axs[i, 2].axis('off')
 
         # fig.colorbar(im2, ax=axs[i, 2], fraction=0.046, pad=0.04)
+    plt.tight_layout()
+    plt.show()
+
+def draw_ellipticity(ax, centroid, e1, e2, scale=20, color='red'):
+    # Convert (e1, e2) to ellipticity magnitude and orientation
+    e = np.sqrt(e1**2 + e2**2)
+    if e > 1:
+        e = 1  # limit for physical interpretation
+    
+    theta = 0.5 * np.arctan2(e2, e1)  # orientation in radians
+    width = scale * (1 + e)
+    height = scale * (1 - e)
+
+    ellipse = Ellipse(xy=centroid, width=width, height=height,
+                      angle=np.degrees(theta), edgecolor=color,
+                      facecolor='none', lw=2)
+    ax.add_patch(ellipse)
+
+def plot_figures(normalized=True):
+    fig, ax = plt.subplots(5,5, figsize=(15,15))
+    centroid = [22, 22]
+    for i in range(5):
+        for j in range(5):
+            image, attrs = fdataset[5*i + j]
+            if normalized:
+                ax[i,j].imshow(image[2])
+            else:
+                denorm = denormalize_non_linear(image , dataset.avg_max_vals)
+                ax[i,j].imshow(denorm[2], origin="lower")  # Updated to use denorm instead of image[0, 5]
+            ax[i,j].axis("off")
+            e_ = np.sqrt(attrs[1]**2 + attrs[2]**2)
+            # ax[i,j].set_title(f"e1 = {attrs[1]:.2f} | e2 = {attrs[2]:.2f} | e = {e_:.2f}")
+            draw_ellipticity(ax[i,j], centroid, attrs[1], attrs[2])
+
+    plt.tight_layout()
+    plt.show()
+    plt.close()
+
+def plot_blended_galaxies(type, denormalized=True):
+    # plot the first blend in the batch, with the r-band
+    fig, ax = plt.subplots(5, 5, figsize=(20, 20))
+
+    for i in range(5):
+        for j in range(5):
+            k = 5 * i + j
+            img, attrs = fdataset[k]
+            if type == "blended":
+                img = img[0]
+            elif type == "center":
+                img = img[1]
+            elif type == "shifted":
+                img = img[2]
+            else:
+                raise ValueError(f"Invalid type '{type}'. Choose from 'blended', 'center', 'shifted'.")
+            if denormalized:
+                img = denormalize_non_linear(img, dataset.avg_max_vals)
+            img = img[2, :, :]  # r-band
+
+            ax[i, j].imshow(img, origin="lower")
+            ax[i, j].axis("off")
+            
+            # plot centers of truth
+            ax[i, j].scatter([attrs[6], attrs[8]], [attrs[7], attrs[9]],
+                            c="red", marker="x")
+
     plt.tight_layout()
     plt.show()

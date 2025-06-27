@@ -1,5 +1,5 @@
-from .model import VAE, LatentRegressor
-from .dataset import SimpleBlendDataset, denormalize_non_linear , log_denorm
+from .model import VAE, LatentRegressor, LatentRegressorRedshift, LatentRegressorEllipticity
+from .dataset import SimpleBlendDataset, denormalize_non_linear
 from .utils import (
     train_epoch,
     val_epoch,
@@ -10,11 +10,16 @@ from .utils import (
     plot_loss_function,
     generated_images,
     load_checkpoint,
+    draw_ellipticity,
+    plot_figures,
+    plot_blended_galaxies
 )
 
 __all__ = [
     "VAE",
     "SimpleBlendDataset",
+    "LatentRegressorRedshift",
+    "LatentRegressorEllipticity",
     "denormalize_non_linear",
     "log_norm",
     "LatentRegressor",
@@ -26,5 +31,8 @@ __all__ = [
     "save_model",
     "plot_loss_function",
     "generated_images",
-    "load_checkpoint"
+    "load_checkpoint",
+    "draw_ellipticity",
+    "plot_figures",
+    "plot_blended_galaxies"
 ]

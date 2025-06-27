@@ -10,7 +10,7 @@ import os
 latent_dims = 32
 name = "v1"
 num_epochs_vae = 50
-num_epochs_regressor = 100
+num_epochs_regressor = 200
 
 # Device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -20,7 +20,7 @@ vae = VAE(latent_dim=latent_dims, beta=1e-3).to(device)
 regressor = LatentRegressor(latent_dim=latent_dims).to(device)
 
 # Optimizers
-optimizer_vae = torch.optim.Adam(vae.parameters(), lr=1e-3, weight_decay=1e-5)
+optimizer_vae = torch.optim.Adam(vae.parameters(), lr=1e-4, weight_decay=1e-5)
 optimizer_reg = torch.optim.Adam(regressor.parameters(), lr=1e-3)
 
 # Load data

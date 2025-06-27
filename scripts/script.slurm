@@ -5,7 +5,7 @@
 #SBATCH --job-name=deblend_test   # nom du job
 #SBATCH --cpus-per-task=8           # nombre de CPU par tache pour gpu_p5 (1/8 du noeud 8-GPU)
 #SBATCH --hint=nomultithread         # hyperthreading desactive
-#SBATCH --time=08:00:00              # temps d'execution maximum demande (HH:MM:SS)
+#SBATCH --time=04:00:00              # temps d'execution maximum demande (HH:MM:SS)
 #SBATCH --mail-type=END
 #SBATCH --mail-user=yenbinhpy308@gmail.com
 #SBATCH --output=%x_%N.out # nom du fichier de sortie

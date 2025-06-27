@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # --- Model ---
 class Encoder(nn.Module):
     def __init__(self, in_channels: int = 6, latent_dim: int = 32):
@@ -79,13 +80,70 @@ class VAE(nn.Module):
 class LatentRegressor(nn.Module):
     def __init__(self, latent_dim, output_dim=3):  # output_dim = redshift, e1, e2
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(latent_dim, 64),
-            nn.ReLU(),
+        self.back = nn.Sequential(
+            nn.Linear(latent_dim, 128),
+            nn.PReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 64),
+            nn.PReLU(),
+            nn.Dropout(0.3),
             nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, output_dim)
+            nn.PReLU()
+            )
+        self.redshift = nn.Sequential(
+            nn.Linear(32, 1),
+            nn.ReLU() # Output > 0
         )
-
+        self.ellipticity = nn.Sequential(
+            nn.Linear(32, 2),
+            nn.Tanh() # Output in [-1,1]
+        )
     def forward(self, z):
-        return self.net(z)
+        h = self.back(z)
+        z_pred = self.redshift(h)
+        e_pred = self.ellipticity(h)
+        return z_pred, e_pred
+
+class LatentRegressorRedshift(nn.Module):
+    def __init__(self, latent_dim, output_dim=3):  # output_dim = redshift, e1, e2
+        super().__init__()
+        self.back = nn.Sequential(
+            nn.Linear(latent_dim, 128),
+            nn.PReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 64),
+            nn.PReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(64, 32),
+            nn.PReLU()
+            )
+        self.redshift = nn.Sequential(
+            nn.Linear(32, 1),
+            nn.ReLU() # Output > 0
+        )
+    def forward(self, z):
+        h = self.back(z)
+        z_pred = self.redshift(h)
+        return z_pred
+
+class LatentRegressorEllipticity(nn.Module):
+    def __init__(self, latent_dim, output_dim=3):  # output_dim = redshift, e1, e2
+        super().__init__()
+        self.back = nn.Sequential(
+            nn.Linear(latent_dim, 128),
+            nn.PReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 64),
+            nn.PReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(64, 32),
+            nn.PReLU()
+            )
+        self.ellipticity = nn.Sequential(
+            nn.Linear(32, 2),
+            nn.Tanh() # Output in [-1,1]
+        )
+    def forward(self, z):
+        h = self.back(z)
+        e_pred = self.ellipticity(h)
+        return e_pred
